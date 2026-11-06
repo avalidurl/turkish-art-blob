@@ -1,0 +1,63 @@
+name: Publish to gokhan-memex
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'site/**'
+  workflow_dispatch:
+
+concurrency:
+  group: publish-turkish-art-blob
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout turkish-art-blob
+        uses: actions/checkout@v4
+
+      - name: Configure SSH deploy key
+        env:
+          MEMEX_DEPLOY_KEY: ${{ secrets.MEMEX_DEPLOY_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$MEMEX_DEPLOY_KEY" > ~/.ssh/memex_deploy_key
+          chmod 600 ~/.ssh/memex_deploy_key
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          cat <<'SSHCFG' >> ~/.ssh/config
+          Host github-memex
+            HostName github.com
+            User git
+            IdentityFile ~/.ssh/memex_deploy_key
+            IdentitiesOnly yes
+          SSHCFG
+          chmod 600 ~/.ssh/config
+
+      - name: Clone gokhan-memex main
+        run: |
+          git clone --depth 1 --branch main git@github-memex:avalidurl/gokhan-memex.git /tmp/gokhan-memex
+
+      - name: Sync site/ into public/turkish-art-blob/
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          mkdir -p /tmp/gokhan-memex/public/turkish-art-blob
+          rsync -av --delete "${GITHUB_WORKSPACE}/site/" /tmp/gokhan-memex/public/turkish-art-blob/
+          cd /tmp/gokhan-memex
+          git config user.name "Gökhan Turhan"
+          git config user.email "11991363+avalidurl@users.noreply.github.com"
+          git add -A public/turkish-art-blob/
+          if git diff --cached --quiet; then
+            echo "No changes to sync."
+          else
+            SHORT_SHA="${SOURCE_SHA:0:7}"
+            git commit -m "chore(turkish-art-blob): sync from turkish-art-blob@${SHORT_SHA}"
+            git push origin main
+          fi
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/memex_deploy_key
